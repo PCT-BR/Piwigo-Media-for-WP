@@ -96,11 +96,11 @@ class Piwigo_Api
       return new WP_Error('piwigo_not_configured', 'Piwigo server URL is not set.');
     }
 
-    $url = $this->server_url . '/ws.php';
+    // format must be a GET parameter — Piwigo only reads it from $_GET
+    $url = $this->server_url . '/ws.php?format=json';
 
     $body = array_merge($params, array(
       'method' => $method,
-      'format' => 'json',
     ));
 
     $response = wp_remote_post($url, array(
