@@ -76,7 +76,7 @@ class Piwigo_Media_Tab
     wp_enqueue_script(
       'piwigo-media-frame',
       PIWIGO_MEDIA_URL . 'assets/js/piwigo-media-frame.js',
-      array('jquery', 'media-views', 'wp-api-fetch'),
+      array('jquery', 'media-views', 'wp-api-fetch', 'wp-hooks', 'wp-element'),
       PIWIGO_MEDIA_VERSION,
       true
     );

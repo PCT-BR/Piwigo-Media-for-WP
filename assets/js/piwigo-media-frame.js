@@ -354,4 +354,76 @@
 
   console.log(DBG, 'MediaFrame.Post + Select prototypes patched — open() intercepted for diagnostics');
 
+  // ── editor.MediaUpload filter — the correct Gutenberg API ─────────────────
+  //
+  // From the official README:
+  //   "By default it renders nothing but it provides a way to have it
+  //    overridden with the `editor.MediaUpload` filter."
+  //
+  // WordPress core registers the wp.media implementation at priority ~10.
+  // We register at priority 100 (after core) so OriginalMediaUpload is
+  // the real implementation that calls wp.media() internally.
+  // We wrap its render prop's open() to intercept wp.media() frame creation.
+  //
+  if ( wp.hooks && wp.hooks.addFilter && wp.element && wp.element.createElement ) {
+    wp.hooks.addFilter(
+      'editor.MediaUpload',
+      'piwigo-media/intercept-media-upload',
+      function wrapMediaUpload( OriginalMediaUpload ) {
+        return function PiwigoMediaUpload( props ) {
+          var render = props.render;
+
+          function wrappedRender( renderProps ) {
+            var origOpen = renderProps.open;
+
+            function piwigoOpen() {
+              // Temporarily wrap wp.media() to intercept the frame
+              // the first time this component creates it (lazy creation).
+              var _orig = window.wp.media;
+
+              if ( typeof _orig === 'function' ) {
+                window.wp.media = function ( attrs ) {
+                  var frame = _orig.apply( this, arguments );
+
+                  if ( frame && typeof frame.on === 'function' && ! frame._piwigoHooked ) {
+                    frame._piwigoHooked = true;
+                    console.log( DBG, 'editor.MediaUpload: frame created, hooking events' );
+
+                    frame.on( 'router:create:browse', function ( rv ) {
+                      console.log( DBG, 'router:create:browse via MediaUpload filter' );
+                      addPiwigoTab( rv );
+                    } );
+
+                    frame.on( 'content:render:piwigo-browser', function ( content ) {
+                      console.log( DBG, 'content:render:piwigo-browser via MediaUpload filter' );
+                      content.view = new PiwigoBrowserContent( { controller: frame } );
+                    } );
+                  }
+
+                  // Restore original immediately
+                  window.wp.media = _orig;
+                  if ( typeof _ !== 'undefined' ) _.extend( window.wp.media, _orig );
+                  return frame;
+                };
+                if ( typeof _ !== 'undefined' ) _.extend( window.wp.media, _orig );
+              }
+
+              origOpen();
+            }
+
+            return render( Object.assign( {}, renderProps, { open: piwigoOpen } ) );
+          }
+
+          return wp.element.createElement(
+            OriginalMediaUpload,
+            Object.assign( {}, props, { render: wrappedRender } )
+          );
+        };
+      },
+      100
+    );
+
+    console.log( DBG, 'editor.MediaUpload filter registered at priority 100' );
+  }
+
 }(jQuery, wp));
