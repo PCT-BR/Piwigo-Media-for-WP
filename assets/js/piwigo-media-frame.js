@@ -1,19 +1,20 @@
 /**
  * PiwigoMedia — custom tab in the WordPress media modal.
  *
- * The tab appears in the standard "Add Media" modal (Classic Editor) and
- * in the "Media Library" modal triggered by Gutenberg image blocks.
- *
  * Where to find it:
- *   Classic Editor  → "Add Media" button → "Piwigo" tab (top navigation)
+ *   Classic Editor  → "Add Media" → "Piwigo" tab in the top navigation
  *   Gutenberg       → Image block → "Media Library" → "Piwigo" tab
+ *
+ * Architecture note:
+ *   Router tabs (Upload / Media Library / Piwigo) work at the *content-mode*
+ *   level, not the state level.  Clicking a tab with id='piwigo-browser'
+ *   fires content:create:piwigo-browser on the frame.  We listen for that
+ *   event and inject our view.  No custom State needed.
  */
 (function ($, wp) {
   'use strict';
 
-  if (!wp || !wp.media || !wp.media.view || !wp.media.view.MediaFrame) {
-    return;
-  }
+  if (!wp || !wp.media || !wp.media.view || !wp.media.view.MediaFrame) return;
 
   var cfg   = window.piwigoMediaConfig || {};
   var i18n  = cfg.i18n    || {};
@@ -29,23 +30,6 @@
       dataType:   'json',
     }, opts || {}));
   }
-
-  // ── State ─────────────────────────────────────────────────────────────────
-  // router:'browse' → frame shows the tab bar and calls browseRouter()
-  // content:'browse' → frame calls browseContent() to render our view
-  var PiwigoBrowserState = wp.media.controller.State.extend({
-    defaults: {
-      id:         'piwigo-browser',
-      title:      i18n.tabLabel || 'Piwigo',
-      router:     'browse',
-      content:    'browse',
-      toolbar:    false,
-      menu:       'default',
-      filterable: false,
-      searchable: false,
-      multiple:   false,
-    },
-  });
 
   // ── Albums view ───────────────────────────────────────────────────────────
   var AlbumsView = wp.Backbone.View.extend({
@@ -65,15 +49,15 @@
         }
         var html = '<ul class="piwigo-grid">';
         albums.forEach(function (a) {
-          var thumb = a.thumbnail_url ? '<img src="' + _.escape(a.thumbnail_url) + '" alt="" loading="lazy">'
-                                      : '<span class="piwigo-no-thumb"></span>';
+          var thumb = a.thumbnail_url
+            ? '<img src="' + _.escape(a.thumbnail_url) + '" alt="" loading="lazy">'
+            : '<span class="piwigo-no-thumb"></span>';
           html += '<li class="piwigo-album-item" data-id="' + a.id + '" data-name="' + _.escape(a.name) + '">'
             + thumb
             + '<span class="piwigo-album-label">' + _.escape(a.name)
             + ' <small>(' + (a.total_nb_images || 0) + ')</small></span></li>';
         });
-        html += '</ul>';
-        self.$el.html(html);
+        self.$el.html(html + '</ul>');
       }).fail(function () {
         self.$el.html('<p class="piwigo-error">' + (i18n.error || 'Error') + ': could not load albums.</p>');
       });
@@ -81,7 +65,7 @@
 
     selectAlbum: function (e) {
       var $item = $(e.currentTarget);
-      this.trigger('album:select', $item.data('id'), $item.data('name'));
+      this.trigger('album:select', +$item.data('id'), $item.data('name'));
     },
   });
 
@@ -112,7 +96,8 @@
         + ' / <strong>' + _.escape(this.albumName) + '</strong>'
         + '</div>'
         + '<ul class="piwigo-grid piwigo-photos-grid"></ul>'
-        + '<p class="piwigo-loading piwigo-photos-loading" style="display:none">' + (i18n.loading || 'Loading…') + '</p>'
+        + '<p class="piwigo-loading piwigo-photos-loading" style="display:none">'
+        + (i18n.loading || 'Loading…') + '</p>'
         + '<button class="piwigo-load-more button" style="display:none">Load more</button>'
       );
       return this;
@@ -130,7 +115,8 @@
 
         if (!resp.photos || !resp.photos.length) {
           if (self.page === 1) {
-            self.$('.piwigo-photos-grid').html('<li class="piwigo-empty-item">' + (i18n.noPhotos || 'No photos.') + '</li>');
+            self.$('.piwigo-photos-grid').html('<li class="piwigo-empty-item">'
+              + (i18n.noPhotos || 'No photos.') + '</li>');
           }
           return;
         }
@@ -140,35 +126,34 @@
           var badge = photo.wp_attachment_id
             ? '<span class="piwigo-already-imported">' + (i18n.alreadyImported || '✓') + '</span>' : '';
           var thumb = photo.thumb_url
-            ? '<img src="' + _.escape(photo.thumb_url) + '" alt="" loading="lazy">' : '<span class="piwigo-no-thumb"></span>';
+            ? '<img src="' + _.escape(photo.thumb_url) + '" alt="" loading="lazy">'
+            : '<span class="piwigo-no-thumb"></span>';
           self.$('.piwigo-photos-grid').append(
             '<li class="piwigo-photo-item" data-id="' + photo.id + '">' + thumb + badge + '</li>'
           );
         });
 
-        var loaded = self.photos.length;
-        if (loaded < self.total) {
-          self.$('.piwigo-load-more').show().text('Load more (' + (self.total - loaded) + ' remaining)');
-        } else {
-          self.$('.piwigo-load-more').hide();
-        }
+        var remaining = self.total - self.photos.length;
+        self.$('.piwigo-load-more').toggle(remaining > 0).text('Load more (' + remaining + ' remaining)');
       }).fail(function () {
         self.$('.piwigo-photos-loading').hide();
         self.$('.piwigo-photos-grid').append('<li class="piwigo-error-item">' + (i18n.error || 'Error') + '</li>');
       });
     },
 
-    loadMore:    function () { this.page++; this.load(); },
-    goBack:      function () { this.trigger('back'); },
+    loadMore: function ()    { this.page++; this.load(); },
+    goBack:   function ()    { this.trigger('back'); },
+
     selectPhoto: function (e) {
-      var $item = $(e.currentTarget).addClass('piwigo-selected');
-      $('.piwigo-photo-item').not($item).removeClass('piwigo-selected');
-      var id = $item.data('id');
+      var $item = $(e.currentTarget);
+      $('.piwigo-photo-item').removeClass('piwigo-selected');
+      $item.addClass('piwigo-selected');
+      var id = +$item.data('id');
       this.trigger('photo:select', this.photos.find(function (p) { return p.id === id; }) || { id: id });
     },
   });
 
-  // ── Detail view ───────────────────────────────────────────────────────────
+  // ── Detail / insert view ──────────────────────────────────────────────────
   var PhotoDetailView = wp.Backbone.View.extend({
     className: 'piwigo-detail-view',
     events: {
@@ -180,8 +165,9 @@
     initialize: function (opts) {
       this.photo     = opts.photo;
       this.albumName = opts.albumName;
+      this.frame     = opts.frame;
       this.mode      = cfg.defaultMode || 'import';
-      this.loading   = false;
+      this.busy      = false;
       this.render();
       this.loadDetail();
     },
@@ -192,7 +178,9 @@
         + '<button class="piwigo-back button">← ' + _.escape(this.albumName) + '</button>'
         + '</div>'
         + '<div class="piwigo-detail-body">'
-        +   '<div class="piwigo-detail-preview"><p class="piwigo-loading">' + (i18n.loading || 'Loading…') + '</p></div>'
+        +   '<div class="piwigo-detail-preview">'
+        +     '<p class="piwigo-loading">' + (i18n.loading || 'Loading…') + '</p>'
+        +   '</div>'
         +   '<div class="piwigo-detail-info">'
         +     '<h3 class="piwigo-detail-title"></h3>'
         +     '<p class="piwigo-detail-desc"></p>'
@@ -202,7 +190,7 @@
         +       '<label><input type="radio" class="piwigo-mode" name="piwigo_insert_mode" value="link" '
         +         (this.mode === 'link' ? 'checked' : '') + '> Link (Piwigo URL)</label>'
         +     '</div>'
-        +     '<div class="piwigo-detail-status"></div>'
+        +     '<p class="piwigo-detail-status"></p>'
         +     '<button class="piwigo-insert button button-primary">Insert into post</button>'
         +   '</div>'
         + '</div>'
@@ -219,7 +207,9 @@
         self.$('.piwigo-detail-title').text(photo.title || '');
         self.$('.piwigo-detail-desc').text(photo.description || '');
         if (photo.wp_attachment_id) {
-          self.$('.piwigo-detail-status').html('<span class="piwigo-already-badge">' + (i18n.alreadyImported || '✓ Already imported') + '</span>');
+          self.$('.piwigo-detail-status').html(
+            '<span class="piwigo-already-badge">' + (i18n.alreadyImported || '✓ Already imported') + '</span>'
+          );
         }
       }).fail(function () {
         self.$('.piwigo-detail-preview').html('<p class="piwigo-error">Could not load photo details.</p>');
@@ -231,8 +221,8 @@
 
     insert: function () {
       var self = this;
-      if (self.loading) return;
-      self.loading = true;
+      if (self.busy) return;
+      self.busy = true;
       self.$('.piwigo-insert').prop('disabled', true).text('Inserting…');
       self.$('.piwigo-detail-status').text('');
 
@@ -241,16 +231,16 @@
         contentType: 'application/json',
         data:        JSON.stringify({ piwigo_photo_id: self.photo.id, mode: self.mode }),
       }).done(function (result) {
-        self.loading = false;
+        self.busy = false;
         self.$('.piwigo-insert').prop('disabled', false).text('Insert into post');
 
         if (result && result.attachment_id) {
-          self.trigger('photo:inserted', result.attachment_id);
+          self.trigger('photo:inserted', result.attachment_id, self.frame);
         } else {
           self.$('.piwigo-detail-status').text('Error: unexpected response.');
         }
       }).fail(function (xhr) {
-        self.loading = false;
+        self.busy = false;
         self.$('.piwigo-insert').prop('disabled', false).text('Insert into post');
         var msg = xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : 'Request failed.';
         self.$('.piwigo-detail-status').text((i18n.error || 'Error: ') + msg);
@@ -258,11 +248,12 @@
     },
   });
 
-  // ── Main browser content (navigation controller) ──────────────────────────
+  // ── Browser content (navigation controller) ───────────────────────────────
   var PiwigoBrowserContent = wp.media.View.extend({
-    className: 'piwigo-browser-content attachments-browser',
+    className: 'piwigo-browser-content',
 
-    initialize: function () {
+    initialize: function (opts) {
+      this.frame       = opts.controller;
       this.currentView = null;
       this.showAlbums();
     },
@@ -281,29 +272,32 @@
     },
 
     showDetail: function (albumName, photo) {
-      var view = new PhotoDetailView({ photo: photo, albumName: albumName });
+      var view = new PhotoDetailView({ photo: photo, albumName: albumName, frame: this.frame });
       this.listenTo(view, 'back',           this.showAlbums.bind(this));
       this.listenTo(view, 'photo:inserted', this.onInserted.bind(this));
       this.swap(view);
     },
 
-    onInserted: function (attachmentId) {
-      var frame      = this.controller;
+    onInserted: function (attachmentId, frame) {
       var attachment = wp.media.attachment(attachmentId);
-
       attachment.fetch().done(function () {
-        var selection = frame.state('library') && frame.state('library').get('selection');
-        if (selection) {
-          selection.reset([attachment]);
+        // Put the attachment into the library state's selection so WordPress
+        // editors (Classic + Gutenberg) receive it via the standard 'select' event.
+        var libraryState = frame.state('library');
+        if (libraryState) {
+          var selection = libraryState.get('selection');
+          if (selection) selection.reset([attachment]);
         }
         frame.close();
-        // Trigger the native select event so editors receive the attachment
         frame.trigger('select');
       });
     },
 
     swap: function (view) {
-      if (this.currentView) { this.stopListening(this.currentView); this.currentView.remove(); }
+      if (this.currentView) {
+        this.stopListening(this.currentView);
+        this.currentView.remove();
+      }
       this.currentView = view;
       this.$el.empty().append(view.el);
       view.delegateEvents();
@@ -312,19 +306,20 @@
     render: function () { return this; },
   });
 
-  // ── Extend MediaFrame.Post ────────────────────────────────────────────────
-  // MediaFrame.Post is the frame opened by "Add Media" in the Classic Editor
-  // and by the Gutenberg "Media Library" button.
+  // ── Patch MediaFrame.Post ─────────────────────────────────────────────────
   var OrigPost = wp.media.view.MediaFrame.Post;
 
   wp.media.view.MediaFrame.Post = OrigPost.extend({
 
     initialize: function () {
       OrigPost.prototype.initialize.apply(this, arguments);
-      this.states.add(new PiwigoBrowserState());
+
+      // Clicking the 'piwigo-browser' router tab fires content:create:piwigo-browser.
+      // We listen here and inject our view into the content region.
+      this.on('content:create:piwigo-browser', this.piwigoContent, this);
     },
 
-    // browseRouter sets up the tab navigation (called when router='browse')
+    // Adds "Piwigo" tab next to "Upload Files" and "Media Library".
     browseRouter: function (routerView) {
       OrigPost.prototype.browseRouter.apply(this, arguments);
       routerView.set({
@@ -335,26 +330,11 @@
       });
     },
 
-    // browseContent renders content (called when content='browse' and state changes)
-    browseContent: function (content) {
-      if (this.state().id === 'piwigo-browser') {
-        this.$el.removeClass('hide-toolbar');
-        content.view = new PiwigoBrowserContent({ controller: this });
-      } else {
-        OrigPost.prototype.browseContent.apply(this, arguments);
-      }
+    // Called by the content:create:piwigo-browser event listener above.
+    piwigoContent: function (content) {
+      content.view = new PiwigoBrowserContent({ controller: this });
     },
-  });
 
-  // ── Also extend MediaFrame.Select for Gutenberg block editor ─────────────
-  // Gutenberg's Image/Gallery blocks sometimes open a Select frame directly.
-  var OrigSelect = wp.media.view.MediaFrame.Select;
-
-  wp.media.view.MediaFrame.Select = OrigSelect.extend({
-    initialize: function () {
-      OrigSelect.prototype.initialize.apply(this, arguments);
-      this.states.add(new PiwigoBrowserState());
-    },
   });
 
 }(jQuery, wp));
