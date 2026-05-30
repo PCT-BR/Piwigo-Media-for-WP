@@ -14,7 +14,11 @@
 (function ($, wp) {
   'use strict';
 
-  if (!wp || !wp.media || !wp.media.view || !wp.media.view.MediaFrame) return;
+  if (
+    !wp || !wp.media || !wp.Backbone ||
+    !wp.media.view || !wp.media.view.MediaFrame || !wp.media.view.MediaFrame.Post ||
+    !wp.media.View || !wp.media.controller
+  ) return;
 
   var cfg   = window.piwigoMediaConfig || {};
   var i18n  = cfg.i18n    || {};
@@ -306,6 +310,24 @@
     render: function () { return this; },
   });
 
+  // ── Helper: add Piwigo tab to any router view that has .set() ────────────
+  function addPiwigoTab(routerView) {
+    // routerView can be a wp.media.view.Router OR a wp.media.controller.Region
+    // (Region wraps the view in .view). Try both.
+    var target = (routerView && routerView.view && typeof routerView.view.set === 'function')
+      ? routerView.view
+      : routerView;
+
+    if (target && typeof target.set === 'function') {
+      target.set({
+        'piwigo-browser': {
+          text:     i18n.tabLabel || 'Piwigo',
+          priority: 200,
+        },
+      });
+    }
+  }
+
   // ── Patch MediaFrame.Post ─────────────────────────────────────────────────
   var OrigPost = wp.media.view.MediaFrame.Post;
 
@@ -314,23 +336,26 @@
     initialize: function () {
       OrigPost.prototype.initialize.apply(this, arguments);
 
-      // Clicking the 'piwigo-browser' router tab fires content:create:piwigo-browser.
-      // We listen here and inject our view into the content region.
+      // Mechanism 1 (primary): clicked tab 'piwigo-browser' fires this event.
       this.on('content:create:piwigo-browser', this.piwigoContent, this);
+
+      // Mechanism 2 (fallback): fired when the router is rendered with mode 'browse'.
+      // Covers cases where browseRouter() is not called (e.g. WP version differences).
+      this.on('router:create:browse', function (routerView) {
+        addPiwigoTab(routerView);
+      }, this);
     },
 
-    // Adds "Piwigo" tab next to "Upload Files" and "Media Library".
+    // browseRouter is called by WordPress to populate the tab navigation.
+    // We call the original (safe) then add our tab.
     browseRouter: function (routerView) {
-      OrigPost.prototype.browseRouter.apply(this, arguments);
-      routerView.set({
-        'piwigo-browser': {
-          text:     i18n.tabLabel || 'Piwigo',
-          priority: 200,
-        },
-      });
+      if (typeof OrigPost.prototype.browseRouter === 'function') {
+        OrigPost.prototype.browseRouter.apply(this, arguments);
+      }
+      addPiwigoTab(routerView);
     },
 
-    // Called by the content:create:piwigo-browser event listener above.
+    // Renders our Piwigo browser when the 'piwigo-browser' content mode is active.
     piwigoContent: function (content) {
       content.view = new PiwigoBrowserContent({ controller: this });
     },
