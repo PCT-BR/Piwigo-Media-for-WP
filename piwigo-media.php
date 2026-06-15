@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       PiwigoMedia
- * Plugin URI:        https://github.com/tufferyromuald85-droid/Piwigo-Media-for-WP
+ * Plugin URI:        https://github.com/PCT-BR/Piwigo-Media-for-WP
  * Description:       Browse and import photos from your Piwigo gallery directly inside the WordPress media modal.
  * Version:           1.2.6
  * Author:            PiwigoMedia Project
